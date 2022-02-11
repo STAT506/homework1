@@ -1,0 +1,134 @@
+---
+title: "HW1"
+author: ""
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(rstanarm)
+library(knitr)
+options(mc.cores = parallel::detectCores())
+```
+# HW1
+
+### Q1. 
+
+#### a. (4 points)
+
+Write an R function or chunk of code to simulate data from a negative binomial regression model using a single continuous covariate and a user specified value of $\phi$.
+
+```{r}
+sim_nb <- function(n, phi, beta0 = 3, beta1 = .1){
+  x <- rnorm(n)
+  mu_vec <- exp(beta0 + x * beta1)
+  return(tibble(x = x, y =  rnbinom(n, mu = mu_vec, size = phi)))
+}
+```
+
+
+#### b. (4 points)
+
+Use the following four values of $\phi:$ {.01, .1, 1, 10} and simulate a dataset. Create a paneled figure that shows y and x for each scenario.
+
+
+```{r}
+n <- 100
+phi_.1 <- sim_nb(n, phi = .1)
+phi_1 <- sim_nb(n, phi = 1)
+phi_10 <- sim_nb(n, phi = 10)
+phi_100 <- sim_nb(n, phi = 100)
+tibble(x = c(phi_.1$x, phi_1$x, phi_10$x, phi_100$x),
+       y = c(phi_.1$y, phi_1$y, phi_10$y, phi_100$y),
+       group = rep(c('phi = .1', 'phi = 1', "phi = 10", "phi = 100"), each = n)) %>% 
+  ggplot(aes(x = x, y=y)) + 
+  geom_point() + facet_wrap(.~group) +
+  theme_bw()
+```
+
+#### c. (4 points)
+Use `stan_glm()` to fit Poisson models and Negative Binomial models for each of the four simulated datasets. Create a table or figure that contains the intercept and slope coefficient for each outcome. Then comment on the implications of your results.
+
+```{r}
+nb_.1 <- stan_glm(y ~ x, data = phi_.1, family = neg_binomial_2(link = 'log'))
+pois_.1 <- stan_glm(y ~ x, data = phi_.1, family = poisson(link = 'log'))
+
+nb_1 <- stan_glm(y ~ x, data = phi_1, family = neg_binomial_2(link = 'log'))
+pois_1 <- stan_glm(y ~ x, data = phi_1, family = poisson(link = 'log'))
+
+nb_10 <- stan_glm(y ~ x, data = phi_10, family = neg_binomial_2(link = 'log'))
+pois_10 <- stan_glm(y ~ x, data = phi_10, family = poisson(link = 'log'))
+
+nb_100 <- stan_glm(y ~ x, data = phi_100, family = neg_binomial_2(link = 'log'))
+pois_100 <- stan_glm(y ~ x, data = phi_100, family = poisson(link = 'log'))
+
+tibble(beta0 = c(nb_.1$coefficients[1], pois_.1$coefficients[1],
+                 nb_1$coefficients[1], pois_1$coefficients[1],
+                 nb_10$coefficients[1], pois_10$coefficients[1],
+                 nb_100$coefficients[1], pois_100$coefficients[1]),
+       beta0_se = c(nb_.1$ses[1], pois_.1$ses[1],
+                 nb_1$ses[1], pois_1$ses[1],
+                 nb_10$ses[1], pois_10$ses[1],
+                 nb_100$ses[1], pois_100$ses[1]),
+       beta1 = c(nb_.1$coefficients[2], pois_.1$coefficients[2],
+                 nb_1$coefficients[2], pois_1$coefficients[2],
+                 nb_10$coefficients[2], pois_10$coefficients[2],
+                 nb_100$coefficients[2], pois_100$coefficients[2]),
+       beta1_se = c(nb_.1$ses[2], pois_.1$ses[2],
+                 nb_1$ses[2], pois_1$ses[2],
+                 nb_10$ses[2], pois_10$ses[2],
+                 nb_100$ses[2], pois_100$ses[2]),
+       model = rep(c('NB',"Pois"), 4),
+       phi = rep(c(.1,1,10,100),each = 2)) %>% kable(digits = 2)
+
+```
+
+The point estimates are similar, but the standard errors are substantially larger for the negative-binomial model. These larger errors are more appropriate and result in valid coverage for these intervals.
+
+#### d. (4 points)
+
+Use `posterior_predict()` and posterior predictive checks to further interrogate the model fit (using the Poisson models)
+
+```{r}
+pois_pred_.1 <- posterior_predict(pois_.1)
+
+tibble(x = c(phi_.1$y, as.numeric(pois_pred_.1[1:2,])), 
+       sim = c(rep('Data', n),rep(c('1',"2"),n))) %>% 
+  ggplot(aes(x = x)) + geom_histogram() + 
+  facet_wrap(.~sim)
+```
+
+The poisson model does a poor job capturing the variability in the data.
+
+
+### Q2.
+
+With binary regression, "separation" is a common problem. This occurs when a continuous predictor is perfectly separated with all zeros below a certain point and all zeros above a certain point. See the simulated data below for an example.
+
+```{r}
+x <- seq(-1, 1, length.out = 20)
+y <- rep(c(0,1), each = 10)
+
+df_sep <- tibble(x=x, y=y)
+
+df_sep %>% ggplot(aes(y=y, x=x)) + geom_point() + theme_bw() + geom_smooth()
+```
+
+#### a. (4 points)
+Using the figure above - and any other references - define separation and describe why it is problematic.
+
+Separation results when there is complete separation in the data - meaning all responses below a threshold value are successes (or failures) where all responses above the threshold are the opposite value. The issue is that this that the model could be approximated with a step function that requires a vertical line (slope = infinity) which cannot (should not?) be achieved with our link functions.
+
+#### b. (4 points)
+
+Use both `glm` and `stan_glm` to fit the data. Identify the differences in the model output and discuss why they might differ.
+
+```{r}
+df_sep %>% stan_glm(y ~ x, family = binomial(link = "logit"), data = ., refresh = 0)
+
+df_sep %>% glm(y ~ x, family = binomial(link = "logit"), data = .)
+
+```
+
+The GLM approach has numerical issues, this is alleviated with the Bayesian approach where the prior regularizes the estimates.
